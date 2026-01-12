@@ -5,17 +5,20 @@
   "scripts": {
     "dev": "vite",
     "server": "node server.js",
-    "yjs": "y-websocket --port 3002",
-    "start": "npm run server & npm run dev",
+    "start": "concurrently \"npm run server\" \"npm run dev\"",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.5",
     "express": "^4.22.1",
+    "express-session": "^1.18.2",
     "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "sqlite3": "^5.1.7",
     "ws": "^8.19.0",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.29"
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
     "concurrently": "^9.2.1",
+    "nodemon": "^3.1.11",
     "vite": "^7.3.1"
   }
 }

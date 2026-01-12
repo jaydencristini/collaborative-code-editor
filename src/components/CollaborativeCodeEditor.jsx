@@ -7,6 +7,9 @@ export default function CollaborativeCodeEditor({
     onBackHome,
     onRename,
     onTouched,
+    canEdit = true,
+    canShare = true,
+    canManageShares = false,
 }) {
     const [code, setCode] = useState('');
     const [language, setLanguage] = useState('javascript');
@@ -16,6 +19,18 @@ export default function CollaborativeCodeEditor({
     const [activeUsers, setActiveUsers] = useState(1);
     const [connected, setConnected] = useState(false);
     const [darkMode, setDarkMode] = useState(true);
+    const [remoteCursors, setRemoteCursors] = useState({});
+    const [shareOpen, setShareOpen] = useState(false);
+    const [shareEmail, setShareEmail] = useState("");
+    const [sharePermission, setSharePermission] = useState("edit"); // 'edit' | 'view'
+    const [shareError, setShareError] = useState("");
+    const [shareBusy, setShareBusy] = useState(false);
+    const [shareListBusy, setShareListBusy] = useState(false);
+    const [shareListError, setShareListError] = useState("");
+    const [shareList, setShareList] = useState([]); // [{ email, permission }]
+    const [ownerEmail, setOwnerEmail] = useState("");
+    const [shareListSaving, setShareListSaving] = useState(false);
+
     const textareaRef = useRef(null);
     const highlightRef = useRef(null);
     const wsRef = useRef(null);
@@ -23,12 +38,38 @@ export default function CollaborativeCodeEditor({
     const applyingRemoteRef = useRef(false);
     const reconnectTimerRef = useRef(null);
     const reconnectAttemptRef = useRef(0);
+    const clientIdRef = useRef(crypto?.randomUUID?.() ?? `c_${Math.random().toString(36).slice(2)}`);
+    const cursorSendTimeoutRef = useRef(null);
 
+    const LINE_HEIGHT_PX = 24; // must match visual line spacing everywhere
     const gutterWidthClass = "w-10 sm:w-12";            // line number gutter width
     const editorLeftPadClass = "pl-14 sm:pl-16";        // textarea padding-left to clear gutter
     const editorPaddingClass = "p-3 sm:p-4";            // inner padding
     const editorFontClass = "text-base sm:text-sm"; // base ~16px on mobile
 
+    <style>{`
+        :root {
+            --galaxy-indigo: #6366f1;
+            --galaxy-purple: #8b5cf6;
+            --galaxy-blue: #3b82f6;
+        }
+    `}</style>
+
+    function getCursorLineCol(text, index) {
+        const before = text.slice(0, index);
+        const lines = before.split("\n");
+        return {
+            line: lines.length - 1,
+            col: lines[lines.length - 1].length
+        };
+    }
+
+    function cursorToPixels({ line, col }) {
+        return {
+            top: line * LINE_HEIGHT_PX,
+            left: col * 8 // approx monospace char width
+        };
+    }
 
     useEffect(() => {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -53,7 +94,10 @@ export default function CollaborativeCodeEditor({
 
             setConnected(false);
 
-            const ws = new WebSocket("ws://localhost:3001");
+            const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+            const wsUrl = `${wsProtocol}://${window.location.hostname}:3001`;
+            const ws = new WebSocket(wsUrl);
+
             wsRef.current = ws;
 
             ws.onopen = () => {
@@ -62,7 +106,11 @@ export default function CollaborativeCodeEditor({
 
                 reconnectAttemptRef.current = 0;
                 setConnected(true);
-                ws.send(JSON.stringify({ type: "join", docId }));
+                ws.send(JSON.stringify({
+                    type: "join",
+                    docId,
+                    clientId: clientIdRef.current
+                }));
             };
 
             ws.onmessage = (event) => {
@@ -81,15 +129,27 @@ export default function CollaborativeCodeEditor({
                         break;
 
                     case "update":
-                        applyingRemoteRef.current = true;
+                        if (message.clientId === clientIdRef.current) break;
                         setCode(message.data.code);
                         setLanguage(message.data.language);
-                        setTimeout(() => (applyingRemoteRef.current = false), 0);
                         break;
 
                     case "userCount":
                         setActiveUsers(message.count);
                         break;
+
+                    case "cursor": {
+                        broadcast(
+                            ws._docId,
+                            {
+                                type: "cursor",
+                                clientId: ws._clientId,
+                                data: msg.data
+                            },
+                            ws // exclude sender
+                        );
+                        break;
+                    }
                 }
             };
 
@@ -342,7 +402,14 @@ export default function CollaborativeCodeEditor({
         if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
 
         updateTimeoutRef.current = setTimeout(() => {
-            wsRef.current.send(JSON.stringify({ type: 'update', docId, code: next, language }));
+            wsRef.current.send(JSON.stringify({
+                type: "update",
+                docId,
+                code: next,
+                language,
+                clientId: clientIdRef.current
+            }));
+
         }, 120);
     };
     const handleLanguageChange = (e) => {
@@ -355,16 +422,174 @@ export default function CollaborativeCodeEditor({
         wsRef.current.send(JSON.stringify({ type: 'update', docId, code, language: nextLang }));
     };
 
-
-    const copyShareLink = async () => {
-        const url = `${window.location.origin}${window.location.pathname}?doc=${docId}`;
+    const shareByEmail = async () => {
+        setShareError("");
+        setShareBusy(true);
 
         try {
-            // Modern clipboard API (requires secure context in many browsers)
+            const res = await fetch(
+                `http://${window.location.hostname}:3001/api/share/grant`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({
+                        docId,
+                        email: shareEmail.trim(),
+                        permission: sharePermission,
+                    }),
+                }
+            );
+
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                setShareError(data.error || "Failed to share document");
+                return;
+            }
+
+            // keep modal open so owner can immediately manage permissions
+            await loadShareList();
+            setShareEmail("");
+            setSharePermission("edit");
+        } catch {
+            setShareError("Network error");
+        } finally {
+            setShareBusy(false);
+        }
+    };
+
+    const loadShareList = async () => {
+        if (!canManageShares) return;
+        setShareListError("");
+        setShareListBusy(true);
+        try {
+            const res = await fetch(
+                `http://${window.location.hostname}:3001/api/share/list?docId=${encodeURIComponent(docId)}`,
+                { credentials: "include" }
+            );
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setShareListError(data.error || "Failed to load share list");
+                setShareList([]);
+                return;
+            }
+            setOwnerEmail(data.ownerEmail || "");
+            setShareList(Array.isArray(data.shares) ? data.shares : []);
+        } catch {
+            setShareListError("Network error");
+            setShareList([]);
+        } finally {
+            setShareListBusy(false);
+        }
+    };
+
+    const setSharePermissionFor = async (email, permission) => {
+        if (!canManageShares) return;
+
+        // Optimistic UI update
+        setShareList((prev) =>
+            prev.map((x) => (x.email === email ? { ...x, permission } : x))
+        );
+
+        try {
+            const res = await fetch(`http://${window.location.hostname}:3001/api/share/set-permission`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ docId, email, permission }),
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                // revert by reloading truth from server
+                await loadShareList();
+                alert(data.error || "Failed to update permission");
+            }
+        } catch {
+            await loadShareList();
+            alert("Network error");
+        }
+    };
+
+    const setPermissionForEmail = async (email, permission) => {
+        setShareListError("");
+        setShareListSaving(true);
+
+        try {
+            const res = await fetch(
+                `http://${window.location.hostname}:3001/api/share/set-permission`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ docId, email, permission }),
+                }
+            );
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setShareListError(data.error || "Failed to update permission");
+                return;
+            }
+
+            // refresh list so UI is always correct
+            await loadShareList();
+        } catch {
+            setShareListError("Network error updating permission");
+        } finally {
+            setShareListSaving(false);
+        }
+    };
+
+    const revokeEmail = async (email) => {
+        setShareListError("");
+        setShareListSaving(true);
+
+        try {
+            const res = await fetch(
+                `http://${window.location.hostname}:3001/api/share/revoke`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ docId, email }),
+                }
+            );
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setShareListError(data.error || "Failed to remove access");
+                return;
+            }
+
+            await loadShareList();
+        } catch {
+            setShareListError("Network error removing access");
+        } finally {
+            setShareListSaving(false);
+        }
+    };
+
+    const copyShareLink = async () => {
+        try {
+            const res = await fetch(`http://${window.location.hostname}:3001/api/share/create-link`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ docId, permission: "edit" }), // or "view"
+            });
+
+            if (!res.ok) throw new Error("failed to create link");
+            const data = await res.json();
+
+            const url = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(
+                data.token
+            )}`;
+
             if (navigator.clipboard && window.isSecureContext) {
                 await navigator.clipboard.writeText(url);
             } else {
-                // Fallback for http:// localhost quirks, mobile Safari, etc.
                 const ta = document.createElement("textarea");
                 ta.value = url;
                 ta.setAttribute("readonly", "");
@@ -380,11 +605,10 @@ export default function CollaborativeCodeEditor({
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch (err) {
-            console.error("Copy failed:", err);
-            alert("Couldn’t copy automatically. Here’s the link:\n\n" + url);
+            console.error(err);
+            alert("Couldn’t create/copy a share link.");
         }
     };
-
 
     const handleKeyDown = (e) => {
         if (e.key === 'Tab') {
@@ -412,7 +636,7 @@ export default function CollaborativeCodeEditor({
         : 'bg-gray-50 border-gray-200 text-gray-400';
     const textClass = darkMode ? 'text-white' : 'text-gray-900';
     const mutedTextClass = darkMode ? 'text-neutral-400' : 'text-gray-600';
-    const accentTextClass = darkMode ? 'text-emerald-400' : 'text-blue-600';
+    const accentTextClass = darkMode ? 'text-indigo-400' : 'text-blue-600';
     const selectClass = darkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'bg-white border-gray-300 text-gray-900';
     const footerClass = darkMode ? 'bg-neutral-800/30 border-neutral-700' : 'bg-white/50 border-gray-200';
 
@@ -436,7 +660,7 @@ export default function CollaborativeCodeEditor({
                 <div className={`${headerClass} rounded-t-xl border p-3 sm:p-4 transition-colors duration-300`}>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                            <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-lg shadow-lg">
+                            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-lg shadow-lg">
                                 <Code2 size={24} className="text-white" />
                             </div>
                             <div>
@@ -481,7 +705,7 @@ export default function CollaborativeCodeEditor({
                             </div>
 
                             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${darkMode ? 'bg-neutral-700/50' : 'bg-white shadow-sm border border-gray-200'}`}>
-                                <Users size={16} className={darkMode ? 'text-emerald-400' : 'text-green-600'} />
+                                <Users size={16} className={darkMode ? 'text-indigo-400' : 'text-green-600'} />
                                 <span className={`text-sm ${textClass}`}>{activeUsers} online</span>
                             </div>
 
@@ -490,13 +714,22 @@ export default function CollaborativeCodeEditor({
                                 <span className={`text-sm ${textClass}`}>{darkMode ? 'Dark' : 'Light'}</span>
                             </div>
 
-                            <button
-                                onClick={copyShareLink}
-                                className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3 sm:px-4 py-2 rounded-lg transition-all shadow-md hover:shadow-lg"
-                            >
-                                {copied ? <Check size={16} /> : <Share2 size={16} />}
-                                <span className="hidden sm:inline">{copied ? "Copied!" : "Share"}</span>
-                            </button>
+                            {canShare && (
+                                <button
+                                    onClick={() => {
+                                        setShareError("");
+                                        setShareEmail("");
+                                        setSharePermission("edit");
+                                        setShareOpen(true);
+
+                                        // load the share list when opening the modal (owners only)
+                                        if (canManageShares) loadShareList();
+                                    }}
+                                    className="flex items-center gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-3 sm:px-4 py-2 rounded-lg transition-all shadow-md hover:shadow-lg"
+                                >
+                                    Share
+                                </button>
+                            )}
 
                         </div>
                     </div>
@@ -511,7 +744,7 @@ export default function CollaborativeCodeEditor({
                         <select
                             value={language}
                             onChange={handleLanguageChange}
-                            className={`${selectClass} border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors duration-300`}
+                            className={`${selectClass} border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors duration-300`}
                         >
                             <option value="javascript">JavaScript</option>
                             <option value="python">Python</option>
@@ -530,11 +763,15 @@ export default function CollaborativeCodeEditor({
                     </div>
                 </div>
 
-                <div className={`${editorBgClass} border rounded-b-xl overflow-hidden transition-colors duration-300`}>
+                <div className={`${editorBgClass} border rounded-b-xl overflow-hidden transition-colors duration-300 shadow-[0_0_0_1px_rgba(139,92,246,0.15),0_20px_60px_-15px_rgba(59,130,246,0.25)]`}>
                     <div className="relative">
                         <div className={`absolute left-0 top-0 bottom-0 ${gutterWidthClass} ${lineNumberClass} border-r ${editorPaddingClass} text-right ${editorFontClass} font-mono select-none overflow-hidden transition-colors duration-300 z-10`}>
                             {code.split('\n').map((_, i) => (
-                                <div key={i} className="leading-6">
+                                <div
+                                    key={i}
+                                    style={{ height: `${LINE_HEIGHT_PX}px`, lineHeight: `${LINE_HEIGHT_PX}px` }}
+                                    className="flex items-center justify-end"
+                                >
                                     {i + 1}
                                 </div>
                             ))}
@@ -542,22 +779,70 @@ export default function CollaborativeCodeEditor({
 
                         <div
                             ref={highlightRef}
-                            className={`absolute left-10 sm:left-12 top-0 w-[calc(100%-2.5rem)] sm:w-[calc(100%-3rem)] ${editorPaddingClass} font-mono ${editorFontClass} leading-6 pointer-events-none whitespace-pre-wrap break-words`}
-                            style={{ height: 500 }}
+                            className={`absolute left-10 sm:left-12 top-0 w-[calc(100%-2.5rem)] sm:w-[calc(100%-3rem)] ${editorPaddingClass} font-mono ${editorFontClass} pointer-events-none whitespace-pre`}
+                            style={{ height: 500, lineHeight: `${LINE_HEIGHT_PX}px` }}
                             dangerouslySetInnerHTML={{ __html: highlightCode(code, language) }}
                         />
 
+                        {/* --- Collaborator cursors overlay (INSERT HERE) --- */}
+                        <div
+                            className={`absolute left-10 sm:left-12 top-0 w-[calc(100%-2.5rem)] sm:w-[calc(100%-3rem)] ${editorPaddingClass} pointer-events-none z-15`}
+                            style={{ height: 500 }}
+                        >
+                            {Object.entries(remoteCursors).map(([id, cursor]) => {
+                                const top = (cursor.line ?? 0) * LINE_HEIGHT_PX;
+                                const left = (cursor.col ?? 0) * charWidth;
+
+                                return (
+                                    <div
+                                        key={id}
+                                        style={{
+                                            position: "absolute",
+                                            top,
+                                            left,
+                                            width: 2,
+                                            height: LINE_HEIGHT_PX,
+                                            backgroundColor: "#a78bfa",
+                                            borderRadius: 1,
+                                            opacity: 0.9,
+                                        }}
+                                        title={`Cursor: ${id}`}
+                                    />
+                                );
+                            })}
+                        </div>
+
                         <textarea
+                            readOnly={!canEdit}
                             ref={textareaRef}
                             value={code}
+                            wrap="off"
                             onChange={(e) => {
+                                if (!canEdit) return;
+
                                 handleCodeChange(e);
                                 requestAnimationFrame(autoResizeEditor);
+
+                                const cursorIndex = e.target.selectionStart;
+                                const { line, col } = getCursorLineCol(next, cursorIndex);
+
+                                clearTimeout(cursorSendTimeoutRef.current);
+                                cursorSendTimeoutRef.current = setTimeout(() => {
+                                    wsRef.current?.send(JSON.stringify({
+                                        type: "cursor",
+                                        docId,
+                                        data: { line, col }
+                                    }));
+                                }, 30);
                             }}
                             onKeyDown={handleKeyDown}
                             placeholder="Start typing your code here... (Press Tab for indentation)"
-                            className={`relative w-full bg-transparent text-transparent font-mono ${editorFontClass} ${editorPaddingClass} ${editorLeftPadClass} focus:outline-none resize-none leading-6 transition-colors duration-300 z-20 overflow-hidden`}
-                            style={{ height: 500, caretColor: darkMode ? 'white' : 'black' }}
+                            className={`relative w-full bg-transparent text-transparent font-mono ${editorFontClass} ${editorPaddingClass} ${editorLeftPadClass} focus:outline-none resize-none transition-colors duration-300 z-20 overflow-auto`}
+                            style={{
+                                height: 500,
+                                caretColor: '#a78bfa',
+                                lineHeight: `${LINE_HEIGHT_PX}px`
+                            }}
                             spellCheck="false"
                         />
 
@@ -581,6 +866,175 @@ export default function CollaborativeCodeEditor({
                     </div>
                 </div>
             </div>
+            {/* ================= SHARE MODAL (INSERTED HERE) ================= */}
+            {shareOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                    <div className="w-full max-w-md rounded-xl bg-neutral-900 border border-neutral-700 shadow-xl">
+                        {/* Header */}
+                        <div className="px-4 py-3 border-b border-neutral-800 text-sm font-semibold">
+                            Share document
+                        </div>
+
+                        {/* Body */}
+                        <div className="p-4 space-y-4">
+                            {/* Share by email */}
+                            <div className="space-y-2">
+                                <div className="text-xs text-neutral-400">Share with people</div>
+
+                                <input
+                                    type="email"
+                                    value={shareEmail}
+                                    onChange={(e) => setShareEmail(e.target.value)}
+                                    placeholder="Email address"
+                                    className="w-full px-3 py-2 rounded bg-neutral-800 border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+
+                                <select
+                                    value={sharePermission}
+                                    onChange={(e) => setSharePermission(e.target.value)}
+                                    className="w-full px-3 py-2 rounded bg-neutral-800 border border-neutral-700"
+                                >
+                                    <option value="edit">Can edit</option>
+                                    <option value="view">View only</option>
+                                </select>
+
+                                <button
+                                    onClick={shareByEmail}
+                                    disabled={!shareEmail.trim() || shareBusy}
+                                    className="w-full mt-2 px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {shareBusy ? "Sharing..." : "Share"}
+                                </button>
+
+                                {canManageShares && (
+                                    <div className="pt-3 border-t border-neutral-800">
+                                        <div className="text-xs text-neutral-400 mb-2">People with access</div>
+
+                                        {shareListBusy ? (
+                                            <div className="text-sm text-neutral-300">Loading…</div>
+                                        ) : shareList.length === 0 ? (
+                                            <div className="text-sm text-neutral-500">Only you have access.</div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {shareList.map((s) => (
+                                                    <div
+                                                        key={s.email}
+                                                        className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2"
+                                                    >
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="text-sm text-neutral-200 truncate">{s.email}</div>
+                                                            <div className="text-xs text-neutral-500">
+                                                                {s.created_at ? `Added ${new Date(s.created_at).toLocaleString()}` : ""}
+                                                            </div>
+                                                        </div>
+
+                                                        <select
+                                                            value={s.permission === "view" ? "view" : "edit"}
+                                                            disabled={shareListSaving}
+                                                            onChange={(e) => setPermissionForEmail(s.email, e.target.value)}
+                                                            className="px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-sm"
+                                                            title="Change permission"
+                                                        >
+                                                            <option value="edit">Can edit</option>
+                                                            <option value="view">View only</option>
+                                                        </select>
+
+                                                        <button
+                                                            disabled={shareListSaving}
+                                                            onClick={() => revokeEmail(s.email)}
+                                                            className="text-sm text-red-300 hover:text-red-200 px-2 py-1"
+                                                            title="Remove access"
+                                                        >
+                                                            Remove
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {shareListError && (
+                                            <div className="text-sm text-red-400 mt-2">{shareListError}</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 3.4 — Share list + permission editor (owners only) */}
+                            {canManageShares && (
+                                <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                                    <div className="text-xs text-neutral-400 mb-2">People with access</div>
+
+                                    {shareListBusy ? (
+                                        <div className="text-sm text-neutral-300">Loading…</div>
+                                    ) : shareListError ? (
+                                        <div className="text-sm text-red-400">{shareListError}</div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {/* Owner row */}
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium truncate">{ownerEmail || "Owner"}</div>
+                                                    <div className="text-xs text-neutral-500">Owner</div>
+                                                </div>
+                                                <div className="text-xs text-neutral-400">Full access</div>
+                                            </div>
+
+                                            {/* Shared rows */}
+                                            {shareList.length === 0 ? (
+                                                <div className="text-sm text-neutral-500">Not shared with anyone yet.</div>
+                                            ) : (
+                                                shareList.map((row) => (
+                                                    <div key={row.email} className="flex items-center justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <div className="text-sm truncate">{row.email}</div>
+                                                        </div>
+
+                                                        <select
+                                                            value={row.permission === "view" ? "view" : "edit"}
+                                                            onChange={(e) => setSharePermissionFor(row.email, e.target.value)}
+                                                            className="px-2 py-1 rounded bg-neutral-800 border border-neutral-700 text-sm"
+                                                        >
+                                                            <option value="edit">Can edit</option>
+                                                            <option value="view">View only</option>
+                                                        </select>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Divider */}
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1 h-px bg-neutral-800" />
+                                <div className="text-xs text-neutral-500">OR</div>
+                                <div className="flex-1 h-px bg-neutral-800" />
+                            </div>
+
+                            {/* Share by link */}
+                            <button
+                                onClick={copyShareLink}
+                                className="w-full px-3 py-2 rounded border border-neutral-700 hover:bg-neutral-800"
+                            >
+                                Copy share link
+                            </button>
+
+                            {shareError && <div className="text-sm text-red-400">{shareError}</div>}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-4 py-3 border-t border-neutral-800 flex justify-end">
+                            <button
+                                onClick={() => setShareOpen(false)}
+                                className="text-sm text-neutral-400 hover:text-neutral-200"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
