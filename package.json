@@ -8,8 +8,7 @@
     "start": "node server.js",
     "dev:all": "concurrently --names \"SERVER,CLIENT\" --prefix-colors \"bgBlue,bgMagenta\" \"npm run server\" \"npm run dev\"",
     "build": "vite build",
-    "preview": "vite preview",
-    "postinstall": "npm run build"
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -21,11 +20,11 @@
     "bcryptjs": "^2.4.3",
     "sqlite3": "^5.1.6",
     "connect-sqlite3": "^0.9.13",
-    "lucide-react": "^0.263.1"
+    "lucide-react": "^0.263.1",
+    "vite": "^5.0.0",
+    "@vitejs/plugin-react": "^4.2.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.0",
     "concurrently": "^8.2.2",
     "nodemon": "^3.0.2",
     "autoprefixer": "^10.4.16",
