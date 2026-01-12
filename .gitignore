@@ -28,3 +28,4 @@ Thumbs.db
 *.swp
 *.swo
 *~
+node_modules/
