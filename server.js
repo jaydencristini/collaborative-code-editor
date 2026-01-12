@@ -14,13 +14,16 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// On Render, use the persistent disk mount if you have one (recommended: /var/data)
-// Fallback to a local ./data folder for local dev.
+// Use Render persistent disk if present, otherwise use a writable temp dir on Render.
+// Locally, fall back to ./data
 const DATA_DIR =
   process.env.DATA_DIR ||
-  (fs.existsSync("/var/data") ? "/var/data" : path.join(__dirname, "data"));
+  (fs.existsSync("/var/data")
+    ? "/var/data"
+    : process.env.NODE_ENV === "production"
+    ? "/tmp/collabdocs-data"
+    : path.join(__dirname, "data"));
 
-// Make sure the directory exists before SQLite opens files inside it
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, "app.sqlite");
@@ -218,8 +221,8 @@ app.post("/api/signup", async (req, res) => {
 
     res.json({ ok: true, user: { id: String(ins.lastID), email: norm } });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "server error" });
+    console.error("SIGNUP ERROR:", e);
+    return res.status(500).json({ error: "signup failed", detail: String(e?.message || e) });
   }
 });
 
