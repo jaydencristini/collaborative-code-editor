@@ -26,9 +26,7 @@ export default function DocsApp() {
 
   /* ---------------- LOAD DOCS ---------------- */
   useEffect(() => {
-    fetch(`http://${window.location.hostname}:3001/api/docs`, {
-      credentials: "include",
-    })
+    fetch("/api/docs", { credentials: "include" })
       .then((r) => r.json())
       .then((data) => {
         setOwnedDocs(data.owned || []);
@@ -42,21 +40,20 @@ export default function DocsApp() {
     if (!token) return;
 
     (async () => {
-      const res = await fetch(`http://${window.location.hostname}:3001/api/share/accept`, {
+      const res = await fetch("/api/share/accept", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ token }),
-      });
+        body: JSON.stringify({ docId, email, permission }),
+      })
+
 
       if (res.ok) {
         const data = await res.json();
         setActiveDocId(data.docId);
 
         // refresh lists so it appears under "Shared with me"
-        const listRes = await fetch(`http://${window.location.hostname}:3001/api/docs`, {
-          credentials: "include",
-        });
+        const listRes = await fetch("/api/docs", { credentials: "include" })
         const listData = await listRes.json();
         setOwnedDocs(listData.owned || []);
         setSharedDocs(listData.shared || []);
@@ -101,22 +98,19 @@ export default function DocsApp() {
     setOwnedDocs((d) => [{ id, title }, ...d]);
     setActiveDocId(id);
 
-    await fetch(`http://${window.location.hostname}:3001/api/docs`, {
+    await fetch("/api/share/docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ id, title }),
-    });
+      body: JSON.stringify({ docId, email, permission }),
+    })
   };
 
   const deleteDoc = async (id) => {
     setOwnedDocs((d) => d.filter((x) => x.id !== id));
     if (id === activeDocId) setActiveDocId(null);
 
-    await fetch(
-      `http://${window.location.hostname}:3001/api/docs/${id}`,
-      { method: "DELETE", credentials: "include" }
-    );
+    await fetch("/api/docs", { method: "DELETE", credentials: "include" });
   };
 
   const startRename = (doc) => {
@@ -136,8 +130,7 @@ export default function DocsApp() {
     );
 
 
-    await fetch(
-      `http://${window.location.hostname}:3001/api/docs/${renamingId}`,
+    await fetch("/api/docs",
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -151,8 +144,7 @@ export default function DocsApp() {
   };
 
   const logout = async () => {
-    await fetch(
-      `http://${window.location.hostname}:3001/api/logout`,
+    await fetch("/api/logout",
       { method: "POST", credentials: "include" }
     );
     window.location.reload();
