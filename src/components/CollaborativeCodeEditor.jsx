@@ -95,7 +95,7 @@ export default function CollaborativeCodeEditor({
             setConnected(false);
 
             const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-            const wsUrl = `${wsProtocol}://${window.location.hostname}:3001`;
+            const wsUrl = `${wsProtocol}://${window.location.host}`;
             const ws = new WebSocket(wsUrl);
 
             wsRef.current = ws;
