@@ -428,7 +428,7 @@ export default function CollaborativeCodeEditor({
 
         try {
             const res = await fetch(
-                `http://${window.location.hostname}:3001/api/share/grant`,
+                "/api/share/grant",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -464,8 +464,7 @@ export default function CollaborativeCodeEditor({
         setShareListError("");
         setShareListBusy(true);
         try {
-            const res = await fetch(
-                `http://${window.location.hostname}:3001/api/share/list?docId=${encodeURIComponent(docId)}`,
+            const res = await fetch(`/api/share/list?docId=${encodeURIComponent(docId)}`,
                 { credentials: "include" }
             );
             const data = await res.json().catch(() => ({}));
@@ -493,7 +492,7 @@ export default function CollaborativeCodeEditor({
         );
 
         try {
-            const res = await fetch(`http://${window.location.hostname}:3001/api/share/set-permission`, {
+            const res = await fetch("/api/share/set-permission", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
@@ -518,7 +517,7 @@ export default function CollaborativeCodeEditor({
 
         try {
             const res = await fetch(
-                `http://${window.location.hostname}:3001/api/share/set-permission`,
+                "/api/share/set-permission",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -548,7 +547,7 @@ export default function CollaborativeCodeEditor({
 
         try {
             const res = await fetch(
-                `http://${window.location.hostname}:3001/api/share/revoke`,
+                "/api/share/revoke",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -573,7 +572,7 @@ export default function CollaborativeCodeEditor({
 
     const copyShareLink = async () => {
         try {
-            const res = await fetch(`http://${window.location.hostname}:3001/api/share/create-link`, {
+            const res = await fetch("/api/share/create-link", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
