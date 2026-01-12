@@ -143,37 +143,31 @@ if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
 }
 
-// CORS
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
+// ---------- CORS ----------
+const corsOptions = {
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
 
-      // local dev
-      if (origin === "http://localhost:5173") return cb(null, true);
-      if (origin === "http://127.0.0.1:5173") return cb(null, true);
-      if (/^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin))
-        return cb(null, true);
+    // local dev
+    if (origin === "http://localhost:5173") return cb(null, true);
+    if (origin === "http://127.0.0.1:5173") return cb(null, true);
+    if (/^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin))
+      return cb(null, true);
 
-      // ✅ Render (allow your deployed frontend origin)
-      if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
+    // Render deployed frontend
+    if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
 
-      return cb(new Error("Not allowed by CORS: " + origin));
-    },
-    credentials: true,
-  })
-);
+    return cb(new Error("Not allowed by CORS: " + origin));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+};
 
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 app.use(express.json());
-
-// CORS (allow localhost + LAN for phones/tablets)
-const ALLOWED_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "https://collabdocs-zsgt.onrender.com",
-];
 
 // ---------- Sessions persisted in SQLite ----------
 import connectSqlite3 from "connect-sqlite3";
@@ -271,7 +265,7 @@ app.post("/api/login", async (req, res) => {
 
 app.post("/api/logout", (req, res) => {
   req.session.destroy(() => {
-    res.clearCookie("sid");
+    res.clearCookie("collabdocs.sid");
     res.json({ ok: true });
   });
 });
