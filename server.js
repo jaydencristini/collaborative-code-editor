@@ -732,9 +732,24 @@ wss.on("connection", (ws, req) => {
   });
 });
 
+// ---------- Serve Vite build (production) ----------
+if (process.env.NODE_ENV === "production") {
+  const distPath = path.join(__dirname, "dist");
+
+  // Serve static assets (JS/CSS/etc)
+  app.use(express.static(distPath));
+
+  // SPA fallback: serve index.html for all non-API routes
+  app.get(/^\/(?!api).*/, (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
 // ---------- Start ----------
 await initDb();
 
-server.listen(3001, () => {
-  console.log("Server running on port 3001 (persistent SQLite)");
+const PORT = process.env.PORT || 3001;
+
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT} (persistent SQLite)`);
 });
