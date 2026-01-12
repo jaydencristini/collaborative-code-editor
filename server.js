@@ -8,11 +8,22 @@ import sqlite3 from "sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { config } from "./config.js";
+import fs from "fs";
 
 // ---------- Paths ----------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_PATH = path.join(__dirname, "data", "app.sqlite");
+
+// On Render, use the persistent disk mount if you have one (recommended: /var/data)
+// Fallback to a local ./data folder for local dev.
+const DATA_DIR =
+  process.env.DATA_DIR ||
+  (fs.existsSync("/var/data") ? "/var/data" : path.join(__dirname, "data"));
+
+// Make sure the directory exists before SQLite opens files inside it
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const DB_PATH = path.join(DATA_DIR, "app.sqlite");
 
 // ---------- SQLite helpers ----------
 sqlite3.verbose();
@@ -124,6 +135,11 @@ function passwordPolicyErrors(password) {
 
 // ---------- Express ----------
 const app = express();
+// Render sits behind a proxy (needed for correct secure-cookie behavior)
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 app.use(express.json());
 
 // CORS (allow localhost + LAN for phones/tablets)
@@ -146,18 +162,18 @@ import connectSqlite3 from "connect-sqlite3";
 const SQLiteStore = connectSqlite3(session);
 
 const sessionParser = session({
-  name: "sid",
-  secret: "dev_secret_change_me",
+  name: "collabdocs.sid",
+  secret: process.env.SESSION_SECRET || "dev_secret_change_me",
   resave: false,
   saveUninitialized: false,
   store: new SQLiteStore({
     db: "sessions.sqlite",
-    dir: path.join(__dirname, "data"),
+    dir: DATA_DIR,
   }),
   cookie: {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: process.env.NODE_ENV === "production", // true on Render
     maxAge: 1000 * 60 * 60 * 24 * 7,
   },
 });
