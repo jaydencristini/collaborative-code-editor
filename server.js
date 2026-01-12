@@ -143,21 +143,28 @@ if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
 }
 
+// CORS
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow same-origin requests (no Origin header)
-      if (!origin) return callback(null, true);
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
 
-      if (ALLOWED_ORIGINS.includes(origin)) {
-        return callback(null, true);
-      }
+      // local dev
+      if (origin === "http://localhost:5173") return cb(null, true);
+      if (origin === "http://127.0.0.1:5173") return cb(null, true);
+      if (/^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin))
+        return cb(null, true);
 
-      return callback(new Error(`Not allowed by CORS: ${origin}`));
+      // ✅ Render (allow your deployed frontend origin)
+      if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
+
+      return cb(new Error("Not allowed by CORS: " + origin));
     },
     credentials: true,
   })
 );
+
+app.options("*", cors());
 
 app.use(express.json());
 
