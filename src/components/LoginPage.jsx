@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-
-const API = `http://${window.location.hostname}:3001`;
+import { apiConfig } from "../apiConfig";
 
 export default function LoginPage({ onLogin }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
@@ -24,7 +23,6 @@ export default function LoginPage({ onLogin }) {
   const submit = async () => {
     setErr("");
 
-    // basic client-side validation (optional but helpful)
     if (!isValidEmail(email)) {
       setErr("Please enter a valid email address.");
       return;
@@ -42,7 +40,7 @@ export default function LoginPage({ onLogin }) {
     try {
       const endpoint = mode === "signup" ? "/api/signup" : "/api/login";
 
-      const res = await fetch(`${API}${endpoint}`, {
+      const res = await fetch(`${apiConfig.apiUrl}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -52,25 +50,22 @@ export default function LoginPage({ onLogin }) {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // your server likely returns { error: "...", details?: [...] }
         const details = Array.isArray(data.details) ? ` (${data.details.join(", ")})` : "";
         setErr((data.error || (mode === "signup" ? "Signup failed" : "Login failed")) + details);
         return;
       }
 
-      // remember email for the avatar dropdown
       try {
         localStorage.setItem("userEmail", data?.user?.email || email.trim());
       } catch { }
 
       onLogin(data.user);
     } catch (e) {
-      setErr("Network error — could not reach the server.");
+      setErr("Network error – could not reach the server.");
     } finally {
       setBusy(false);
     }
   };
-
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900 text-white flex items-center justify-center p-4">
@@ -102,7 +97,7 @@ export default function LoginPage({ onLogin }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="At least 6 characters"
+              placeholder="At least 10 characters"
               type="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}
             />

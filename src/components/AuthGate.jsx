@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import LoginPage from "./LoginPage";
+import { apiConfig } from "../apiConfig";
 
 export default function AuthGate({ children }) {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    fetch(`http://${window.location.hostname}:3001/api/me`, {
+    fetch(`${apiConfig.apiUrl}/api/me`, {
       credentials: "include",
     })
       .then((res) => {

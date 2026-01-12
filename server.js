@@ -7,6 +7,7 @@ import { WebSocketServer } from "ws";
 import sqlite3 from "sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { config } from "./config.js";
 
 // ---------- Paths ----------
 const __filename = fileURLToPath(import.meta.url);
