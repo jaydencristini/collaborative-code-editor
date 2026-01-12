@@ -143,22 +143,30 @@ if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
 }
 
-app.use(express.json());
-
-// CORS (allow localhost + LAN for phones/tablets)
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (origin === "http://localhost:5173") return cb(null, true);
-      if (origin === "http://127.0.0.1:5173") return cb(null, true);
-      if (/^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin))
-        return cb(null, true);
-      return cb(new Error("Not allowed by CORS: " + origin));
+    origin: (origin, callback) => {
+      // Allow same-origin requests (no Origin header)
+      if (!origin) return callback(null, true);
+
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
     },
     credentials: true,
   })
 );
+
+app.use(express.json());
+
+// CORS (allow localhost + LAN for phones/tablets)
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://collabdocs-zsgt.onrender.com",
+];
 
 // ---------- Sessions persisted in SQLite ----------
 import connectSqlite3 from "connect-sqlite3";
@@ -222,7 +230,9 @@ app.post("/api/signup", async (req, res) => {
     res.json({ ok: true, user: { id: String(ins.lastID), email: norm } });
   } catch (e) {
     console.error("SIGNUP ERROR:", e);
-    return res.status(500).json({ error: "signup failed", detail: String(e?.message || e) });
+    return res
+      .status(500)
+      .json({ error: "signup failed", detail: String(e?.message || e) });
   }
 });
 
