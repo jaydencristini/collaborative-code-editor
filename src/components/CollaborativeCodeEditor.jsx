@@ -848,7 +848,7 @@ export default function CollaborativeCodeEditor({
                     </div>
                 </div>
 
-                <div className={`mt-4 p-4 ${footerClass} rounded-lg border transition-colors duration-300`}>
+                {/* <div className={`mt-4 p-4 ${footerClass} rounded-lg border transition-colors duration-300`}>
                     <div className={`text-sm ${mutedTextClass}`}>
                         <p className="mb-2">
                             <strong className={textClass}>✨ Real-time collaboration with syntax highlighting!</strong>
@@ -863,7 +863,7 @@ export default function CollaborativeCodeEditor({
                             <li>• Theme automatically matches your system preferences</li>
                         </ul>
                     </div>
-                </div>
+                </div> */}
             </div>
             {/* ================= SHARE MODAL (INSERTED HERE) ================= */}
             {shareOpen && (
